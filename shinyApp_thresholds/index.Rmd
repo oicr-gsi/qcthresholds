@@ -1,0 +1,169 @@
+---
+title: "cfMeDIP-seq QC thresholding"
+author: "Prisni Rath"
+date: "15/10/2021"
+output: html_document
+# output: flexdashboard::flex_dashboard
+runtime: shiny
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+# load essential libraries
+knitr::opts_chunk$set(echo = TRUE)
+library(shiny)
+library(ggplot2)
+library(gtools)
+library(reshape2)
+```
+
+## GOAL
+To assess the QC thresholds for 
+\
+1) Methylation beta
+\
+2) Relative CpG Frequency in regions
+\
+```{r, echo=FALSE}
+
+# read the metrics table from dashi
+data_file <- "data/all_cfMedips_projects_summary.tsv"
+data.medips <- read.csv(data_file, sep = "\t", as.is = T)
+# dim(data.medips) #7352   87
+# restricting to CM geo_library_source_template_type
+data.medips <- data.medips[data.medips$geo_library_source_template_type %in% c("CM"),]
+# head(data.medips)
+# dim(data.medips) #5212   87
+```
+
+Investigating the metrics across all projects
+
+```{r, echo=FALSE}
+# selecting metric 
+metric <- readLines("data/metrics.txt")
+meta <- readLines("data/meta.txt")
+
+# design panel
+inputPanel(
+  # load run names based on project selected
+  selectInput("metric", label = "Metrics for evaluation",
+              choices = c("select metric name"), selected = "metric", width = 2000),
+  selectInput("meta", label = "Meta for evaluation",
+              choices = c("select metric name"), selected = "meta", width = 2000),
+  selectInput("projecttitle", label = "subset by project name",
+              choices = c("select study name"), multiple = T, selected = NULL, width = 2000),
+  selectInput("runID", label = "run alias",
+              choices = c("select run name"), multiple = T, selected = NULL, width = 2000),
+  selectInput("groupBy", label = "group by run or project",
+              choices = c("studyTitle", "Run.Alias"), selected = NULL, width = 2000),
+  checkboxInput("showBoxPlot", label= "Show individual distributions", 
+                  value = FALSE, width = NULL)
+  # more for input ng 
+  # expected read clusters/sequenced at
+)
+
+observe({
+  updateSelectInput(
+    session,
+    "metric",
+    choices = metric
+  )
+})
+
+observe({
+  updateSelectInput(
+    session,
+    "meta",
+    choices = meta
+  )
+})
+
+runInfo <- reactive({
+  runIDs <- unique(data.medips$Run.Alias)
+  if (!is.null(input$`project title`)){
+    runIDs <- unique(data.medips[data.medips$studyTitle %in% input$`project title`,]$Run.Alias)
+  }
+  return (runIDs)
+})
+
+observe({
+  updateSelectInput(
+    session,
+    "runID",
+    choices = runInfo()
+  )
+})
+
+projInfo <- reactive({
+  projIDs <- unique(data.medips$studyTitle)
+  # if (!is.null(input$`runID`)){
+  #   projIDs <- unique(data.medips[data.medips$Run.Alias %in% input$`runID`,]$studyTitle)
+  # }
+  return (projIDs)
+})
+
+observe({
+  updateSelectInput(
+    session,
+    "projecttitle",
+    choices = projInfo()
+  )
+})
+
+```
+
+```{r, echo=F}
+
+# subset the data metrics based on metric and meta
+updatedData <- reactive({
+  if (!is.null(input$`projecttitle`)){
+    data.medips <- data.medips[data.medips$studyTitle %in% input$`projecttitle`,]
+  }
+  if (!is.null(input$`runID`)){
+    data.medips <- data.medips[data.medips$Run.Alias %in% input$`runID`,]
+  }
+  metric_name <- stringr::str_replace_all(as.character(input$`metric`), " ", ".")
+  meta_name <-  stringr::str_replace_all(as.character(input$`meta`), " ", ".")
+  group_by <- stringr::str_replace_all(as.character(input$`groupBy`), " ", ".")
+  # colnames(data.medips)[colnames(data.medips) %in% c(meta_name,metric_name)]
+  updated.data <- data.medips[,colnames(data.medips)[colnames(data.medips) %in% c(meta_name,metric_name)]]
+  updated.data$group_by <- data.medips[,group_by]
+  return (updated.data)
+})
+
+# renderTable({
+#   head(updatedData())
+#   # metric_name <- stringr::str_replace_all(as.character(input$`metric`), " ", ".")
+#   # meta_name <-  stringr::str_replace_all(as.character(input$`meta`), " ", ".")
+#   # # colnames(data.medips)[colnames(data.medips) %in% c(meta_name,metric_name)]
+#   # # m <- c(meta_name,metric_name)
+#   # # m
+#   # colnames(data.medips)[colnames(data.medips) %in% c(meta_name,metric_name)]
+# })
+
+# based on metas selected 
+# plots
+renderPlot({
+  data.for.plot <- updatedData()
+  names(data.for.plot) <- c("meta", "metric", "group_by")
+  metric_name <- input$metric
+  meta_name <- input$meta
+  iqr.data <- quantile(data.for.plot[,"metric"], c(0.25,0.5,0.75))
+  
+  plt <- ggplot(data.for.plot) 
+  plt <- plt +
+    geom_point(aes(x = meta, y = metric, color = meta, group = meta)) +
+    geom_hline(yintercept = iqr.data[1],linetype='dotted', col = 'red') +
+    geom_hline(yintercept = iqr.data[2],linetype='dotted', col = 'red') +  
+    geom_hline(yintercept = iqr.data[3], linetype='dotted', col = 'red') +
+    ylab(metric_name) + xlab(meta_name) + theme_classic() + 
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+  if (input$`showBoxPlot`){
+    # groupBy <- input$`groupBy`
+    plt <- plt + geom_boxplot(aes(x = meta, y = metric, group = group_by))
+  }
+  plt
+})
+# display plot of IQRs shaded for all data samples
+
+```
+
