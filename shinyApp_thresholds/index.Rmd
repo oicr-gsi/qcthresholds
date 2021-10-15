@@ -31,6 +31,7 @@ data.medips <- read.csv(data_file, sep = "\t", as.is = T)
 # dim(data.medips) #7352   87
 # restricting to CM geo_library_source_template_type
 data.medips <- data.medips[data.medips$geo_library_source_template_type %in% c("CM"),]
+# data.medips$inputNg <- ifelse(data.medips$studyTitle %in% c("PBCM","AIX"), "possibly < 10ng", "10ng")
 # head(data.medips)
 # dim(data.medips) #5212   87
 ```
@@ -56,8 +57,12 @@ inputPanel(
   selectInput("groupBy", label = "group by run or project",
               choices = c("studyTitle", "Run.Alias"), selected = NULL, width = 2000),
   checkboxInput("showBoxPlot", label= "Show individual distributions", 
-                  value = FALSE, width = NULL)
-  # more for input ng 
+                  value = FALSE, width = NULL),
+  checkboxInput("splitByInput", label= "split plots by input DNA", 
+                  value = FALSE, width = NULL),
+  checkboxInput("splitByReads", label= "expected read clusters from sequencing", 
+                  value = FALSE, width = NULL),
+  checkboxInput("scaleY", label = "scale Y axis", value = FALSE, width = NULL)
   # expected read clusters/sequenced at
 )
 
@@ -127,24 +132,44 @@ updatedData <- reactive({
   # colnames(data.medips)[colnames(data.medips) %in% c(meta_name,metric_name)]
   updated.data <- data.medips[,colnames(data.medips)[colnames(data.medips) %in% c(meta_name,metric_name)]]
   updated.data$group_by <- data.medips[,group_by]
+  # additional info
+  updated.data$inputNg <- ifelse(updated.data$studyTitle %in% c("PBCM","AIX"), "possibly < 10ng", "10ng")
+  # adding more layers
+#   AIX,60M
+# PBCM,60M
+# HPCC,40M
+# HLCS,25M (but in the first batch, they were topped up to ~40M)
+# KLCS,60M
+# CMPP,60M
+# NASHB,60M
+# EVOLVE,60M
+# WTCC,60M
+# MS3,20M for Bm and 40M for Pb
+  expectedRC <- c("AIX" = "60M", 
+                  "PBCM" = "60M",
+                  "HPCC" = "40M",
+                  "HLCS" = "25M",
+                  "KLCS" = "60M",
+                  "CMPP" = "60M",
+                  "NASHB" = "60M",
+                  "EVOLVE" = "60M",
+                  "WTCC" = "60M",
+                  "MS3" = "20M")
+  updated.data$expectedReadClustersFromSeq <- expectedRC[updated.data$studyTitle]
+  # refining this 
+  # updated.data[updated.data$studyTitle == "MS3" &
+  #                updated.data$geo_tissue_origin == "Pb",]$expectedReadClustersFromSeq <- "40M"
   return (updated.data)
 })
 
 # renderTable({
 #   head(updatedData())
-#   # metric_name <- stringr::str_replace_all(as.character(input$`metric`), " ", ".")
-#   # meta_name <-  stringr::str_replace_all(as.character(input$`meta`), " ", ".")
-#   # # colnames(data.medips)[colnames(data.medips) %in% c(meta_name,metric_name)]
-#   # # m <- c(meta_name,metric_name)
-#   # # m
-#   # colnames(data.medips)[colnames(data.medips) %in% c(meta_name,metric_name)]
 # })
 
-# based on metas selected 
 # plots
 renderPlot({
   data.for.plot <- updatedData()
-  names(data.for.plot) <- c("meta", "metric", "group_by")
+  names(data.for.plot) <- c("meta", "metric", "group_by", "inputNg", "expectedReadClustersFromSeq")
   metric_name <- input$metric
   meta_name <- input$meta
   iqr.data <- quantile(data.for.plot[,"metric"], c(0.25,0.5,0.75))
@@ -160,6 +185,22 @@ renderPlot({
   if (input$`showBoxPlot`){
     # groupBy <- input$`groupBy`
     plt <- plt + geom_boxplot(aes(x = meta, y = metric, group = group_by))
+  }
+  
+  if (!input$`splitByReads`){
+    # groupBy <- input$`groupBy`
+    plt <- plt + facet_grid(inputNg~., space = "free")
+  }
+  if (!input$`splitByInput`){
+    plt <- plt + facet_grid(. ~ expectedReadClustersFromSeq, space = "free")
+  }
+  
+  if (input$`splitByReads` & input$`splitByInput`){
+    plt <- plt + facet_grid(inputNg ~ expectedReadClustersFromSeq, space = "free")
+  }
+  
+  if(input$`scaleY`){
+    plt <- plt + scale_y_log10()
   }
   plt
 })
